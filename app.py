@@ -32,6 +32,7 @@ def clean(value):
 
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "uniform_measurement_uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+DONE_SCHOOLS_DIR = Path.home() / "Downloads" / "Done Schools"
 
 # Required template fields. Matching is name-based, not position-based.
 COMMON_HEADER_ALIASES = {
@@ -418,6 +419,13 @@ def index():
                 original_name = secure_filename(template_file.filename or "template.xlsx")
                 template_path = Path(original_name)
                 filled_name = f"{template_path.stem} FILLED{template_path.suffix or '.xlsx'}"
+                DONE_SCHOOLS_DIR.mkdir(parents=True, exist_ok=True)
+                done_path = DONE_SCHOOLS_DIR / filled_name
+                suffix = 1
+                while done_path.exists():
+                    done_path = DONE_SCHOOLS_DIR / f"{template_path.stem} FILLED ({suffix}){template_path.suffix or '.xlsx'}"
+                    suffix += 1
+                shutil.copy2(out_path, done_path)
                 results.append({
                     "name": filled_name,
                     "path": str(out_path),
