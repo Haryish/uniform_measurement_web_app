@@ -1,5 +1,6 @@
 
 from flask import Flask, render_template, request, send_file, flash, redirect, url_for
+from werkzeug.utils import secure_filename
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from pathlib import Path
@@ -227,8 +228,14 @@ def index():
             wb,report=fill_template(template_file,patterns,mode,seed,allow_fallback,overwrite)
             out=BytesIO()
             wb.save(out); out.seek(0)
-            session_path=UPLOAD_DIR/"completed_uniform_measurements.xlsx"
+            # Keep the uploaded template filename and add the FILLED suffix.
+            # Example: school_export.xlsx -> school_export FILLED.xlsx
+            original_name = secure_filename(template_file.filename or "template.xlsx")
+            template_path = Path(original_name)
+            filled_name = f"{template_path.stem} FILLED{template_path.suffix or '.xlsx'}"
+            session_path = UPLOAD_DIR / "completed_uniform_measurements.xlsx"
             with open(session_path,"wb") as f: f.write(out.getbuffer())
+            (UPLOAD_DIR / "download_name.txt").write_text(filled_name, encoding="utf-8")
             filled=sum(1 for x in report if x[0]=="FILLED")
             warnings=sum(1 for x in report if x[0]=="WARNING")
             return render_template("result.html", filled=filled,warnings=warnings,report=report[-100:])
@@ -243,7 +250,9 @@ def download():
     if not p.exists():
         flash("No generated file is available yet.")
         return redirect(url_for("index"))
-    return send_file(p,as_attachment=True,download_name="completed_uniform_measurements.xlsx")
+    name_file = UPLOAD_DIR / "download_name.txt"
+    download_name = name_file.read_text(encoding="utf-8").strip() if name_file.exists() else "completed_uniform_measurements.xlsx"
+    return send_file(p,as_attachment=True,download_name=download_name)
 
 @app.route("/generate-patterns", methods=["POST"])
 def generate():
