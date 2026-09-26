@@ -1,0 +1,11 @@
+
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Completed</title><style>
+body{font-family:system-ui;background:#f4f6f8;margin:0}.wrap{max-width:850px;margin:60px auto;padding:20px}.card{background:white;border-radius:18px;padding:30px;box-shadow:0 8px 30px #0001}a,button{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:700;background:#17202a;color:white;margin-right:8px}.warn{background:#fff3cd;padding:10px;border-radius:8px;margin:15px 0}li{margin:5px 0}
+</style></head><body><div class="wrap"><div class="card">
+<h1>✅ Excel generated</h1>
+<p><b>{{filled}}</b> student rows were filled.</p>
+{% if warnings %}<div class="warn"><b>{{warnings}}</b> warning(s) were recorded. Review the list below.</div>{% endif %}
+<p><a href="/download">⬇ Download completed Excel</a><a href="/">← Start another</a></p>
+{% if report %}<h3>Recent processing log</h3><ul>{% for typ,sheet,msg in report %}<li><b>{{typ}}</b> · {{sheet}} · {{msg}}</li>{% endfor %}</ul>{% endif %}
+</div></div></body></html>
