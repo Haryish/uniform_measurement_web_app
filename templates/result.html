@@ -1,11 +1,4 @@
-
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Completed</title><style>
-body{font-family:system-ui;background:#f4f6f8;margin:0}.wrap{max-width:850px;margin:60px auto;padding:20px}.card{background:white;border-radius:18px;padding:30px;box-shadow:0 8px 30px #0001}a,button{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:700;background:#17202a;color:white;margin-right:8px}.warn{background:#fff3cd;padding:10px;border-radius:8px;margin:15px 0}li{margin:5px 0}
-</style></head><body><div class="wrap"><div class="card">
-<h1>✅ Excel generated</h1>
-<p><b>{{filled}}</b> student rows were filled.</p>
-{% if warnings %}<div class="warn"><b>{{warnings}}</b> warning(s) were recorded. Review the list below.</div>{% endif %}
-<p><a href="/download">⬇ Download completed Excel</a><a href="/">← Start another</a></p>
-{% if report %}<h3>Recent processing log</h3><ul>{% for typ,sheet,msg in report %}<li><b>{{typ}}</b> · {{sheet}} · {{msg}}</li>{% endfor %}</ul>{% endif %}
-</div></div></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Processing Results</title>
+<style>body{font-family:system-ui;background:#f4f6f8;margin:0;color:#17202a}.wrap{max-width:950px;margin:50px auto;padding:20px}.card{background:white;border-radius:18px;padding:30px;box-shadow:0 8px 30px #0001}.result{border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin:12px 0}.ok{background:#ecfdf3}.bad{background:#fef2f2;color:#991b1b}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}a{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:700;background:#17202a;color:white}a.secondary{background:#e9eef3;color:#17202a}small{color:#667085}li{margin:4px 0}</style></head><body><div class="wrap"><div class="card"><h1>📋 Processing results</h1><p>The same pattern workbook remains loaded, so you can continue with another template.</p>
+{% for r in results %}<div class="result {% if r.error %}bad{% else %}ok{% endif %}"><h3>{{r.name}}</h3>{% if r.error %}<b>❌ {{r.error}}</b>{% else %}<p>✅ <b>{{r.filled}}</b> student rows filled{% if r.warnings %}, <b>{{r.warnings}}</b> warning(s){% endif %}.</p><a href="{{url_for('download_result', filename=r.path.split('/')[-1], name=r.name)}}">⬇ Download FILLED file</a>{% if r.report %}<details><summary>Processing log</summary><ul>{% for typ,sheet,msg in r.report %}<li><b>{{typ}}</b> · {{sheet}} · {{msg}}</li>{% endfor %}</ul></details>{% endif %}{% endif %}</div>{% endfor %}
+<div class="actions"><a href="/next">➡ Next file, keep same patterns</a><a class="secondary" href="/">🔄 Start new pattern set</a></div></div></div></body></html>
