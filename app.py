@@ -161,13 +161,32 @@ def normalize_header(v):
     return clean(v).replace("\n", " ")
 
 
+def detect_sheet_gender(ws, header_row):
+    """Infer gender from the student rows, falling back to the sheet title."""
+    gender_values = []
+    for r in range(header_row + 1, ws.max_row + 1):
+        v = clean(ws.cell(r, 3).value)
+        if v:
+            gender_values.append(v)
+    if any(v in ("female", "girl", "girls", "பெண்", "மாணவி", "மாணவிகள்") or "female" in v or "girl" in v for v in gender_values):
+        return "girls"
+    if any(v in ("male", "boy", "boys", "ஆண்", "மாணவன்", "மாணவர்கள்") or "male" in v or "boy" in v for v in gender_values):
+        return "boys"
+    title = clean(ws.title)
+    if "girl" in title or "female" in title or "பெண்" in title:
+        return "girls"
+    if "boy" in title or "male" in title or "ஆண்" in title:
+        return "boys"
+    return None
+
+
 def validate_template_workbook(wb):
-    """Return (ok, details). Every non-empty worksheet must have the expected header row."""
+    """Validate the common student headers and infer boys/girls from the sheet data, not the sheet name."""
     errors = []
     valid_sheets = 0
     for ws in wb.worksheets:
         header_row = None
-        for r in range(1, min(ws.max_row, 15) + 1):
+        for r in range(1, min(ws.max_row, 20) + 1):
             vals = [normalize_header(ws.cell(r, c).value) for c in range(1, ws.max_column + 1)]
             if vals[:6] == COMMON_HEADERS:
                 header_row = r
@@ -175,17 +194,23 @@ def validate_template_workbook(wb):
         if not header_row:
             errors.append(f"Sheet '{ws.title}': required header row not found or does not match.")
             continue
+
         headers = [normalize_header(ws.cell(header_row, c).value) for c in range(1, ws.max_column + 1)]
-        gender_hint = "girls" if "girl" in clean(ws.title) or "female" in clean(ws.title) else "boys"
+        gender_hint = detect_sheet_gender(ws, header_row)
+        if not gender_hint:
+            errors.append(f"Sheet '{ws.title}': could not determine whether this is a boys or girls template from the Gender column.")
+            continue
+
         expected_measurements = GIRLS_MEASUREMENT_HEADERS if gender_hint == "girls" else BOYS_MEASUREMENT_HEADERS
-        # Validate the expected measurement header sequence immediately after the first 6 columns.
         actual_measurements = headers[6:6 + len(expected_measurements)]
         if actual_measurements != expected_measurements:
             errors.append(
-                f"Sheet '{ws.title}': measurement headers do not match the expected {gender_hint} template."
+                f"Sheet '{ws.title}': measurement headers do not match the expected {gender_hint} template. "
+                f"Expected: {', '.join(expected_measurements)}"
             )
             continue
         valid_sheets += 1
+
     if not wb.worksheets:
         errors.append("Workbook contains no worksheets.")
     if errors:
@@ -193,7 +218,6 @@ def validate_template_workbook(wb):
     if valid_sheets == 0:
         return False, ["No valid student measurement sheet was found."]
     return True, []
-
 
 def find_template_header(ws):
     for r in range(1, min(ws.max_row, 15) + 1):
@@ -208,13 +232,17 @@ def template_info(ws):
     if not hr:
         raise ValueError(f"Could not find the valid student table header in sheet '{ws.title}'.")
     headers = [clean(ws.cell(hr, c).value) for c in range(1, ws.max_column + 1)]
-    section_col = 6
-    measurement_cols = list(range(section_col + 1, ws.max_column + 1))
-    class_col = 5
-    gender_col = 3
-    name_col = 2
-    return hr, measurement_cols, class_col, gender_col, name_col
-
+    gender_hint = detect_sheet_gender(ws, hr)
+    if gender_hint == "girls":
+        expected = GIRLS_MEASUREMENT_HEADERS
+    elif gender_hint == "boys":
+        expected = BOYS_MEASUREMENT_HEADERS
+    else:
+        raise ValueError(f"Could not determine gender/template type in sheet '{ws.title}'.")
+    if headers[6:6 + len(expected)] != expected:
+        raise ValueError(f"Invalid measurement headers in sheet '{ws.title}'.")
+    measurement_cols = list(range(7, 7 + len(expected)))
+    return hr, measurement_cols, 5, 3, 2, gender_hint
 
 def choose_patterns(all_patterns, gender, cls, allow_fallback=True):
     exact = [p for p in all_patterns if p["gender"] == gender and cls in p["classes"]]
@@ -238,7 +266,7 @@ def fill_template(template_file, patterns, mode="round_robin", seed=42, allow_fa
     rng = random.Random(seed)
     report = []
     for ws in wb.worksheets:
-        hr, mcols, class_col, gender_col, name_col = template_info(ws)
+        hr, mcols, class_col, gender_col, name_col, sheet_gender = template_info(ws)
         counters = {}
         for r in range(hr + 1, ws.max_row + 1):
             name = ws.cell(r, name_col).value
