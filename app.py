@@ -14,17 +14,71 @@ import shutil
 app = Flask(__name__)
 app.secret_key = "uniform-measurement-local-app"
 
+def clean(value):
+    """Normalize Excel header/text values for tolerant matching.
+
+    Handles None, Excel line breaks, non-breaking spaces, repeated whitespace,
+    underscores/hyphens, and harmless punctuation differences while preserving
+    Tamil characters.
+    """
+    if value is None:
+        return ""
+    text = str(value).replace("\u00a0", " ").replace("\r", " ").replace("\n", " ")
+    text = text.strip().lower()
+    text = re.sub(r"[\u2010-\u2015\u2212_]+", " ", text)
+    text = re.sub(r"[.:;|/\\]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "uniform_measurement_uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+DONE_SCHOOLS_DIR = Path.home() / "Downloads" / "Done Schools"
 
-# Expected school template headers. The app intentionally validates these before processing.
-COMMON_HEADERS = ["s.no", "student's name", "gender", "emis number", "class", "section"]
-BOYS_MEASUREMENT_HEADERS = ["தோள் பட்டை", "உயரம்", "மார்பு சுற்றளவு", "கை நீளம்", "கை சுற்றளவு", "இடுப்பு சுற்றளவு", "கால் உயரம்", "தொடை சுற்றளவு"]
-GIRLS_MEASUREMENT_HEADERS = ["தோள் பட்டை", "உயரம்", "மார்பு சுற்றளவு", "கை நீளம்", "கை சுற்றளவு", "பாவாடை உயரம்", "இடுப்பு சுற்றளவு"]
+# Required template fields. Matching is name-based, not position-based.
+COMMON_HEADER_ALIASES = {
+    "sno": {"s.no", "sno", "s no", "serial no", "serial number"},
+    "name": {"student's name", "student name", "name", "மாணவரின் பெயர்", "மாணவர் பெயர்"},
+    "gender": {"gender", "sex", "பாலினம்"},
+    "emis": {"emis number", "emis no", "emis", "emis எண்"},
+    "class": {"class", "வகுப்பு"},
+    "section": {"section", "பிரிவு"},
+}
+
+MEASUREMENT_ALIASES = {
+    "shoulder": {"தோள் பட்டை", "தோள்பட்டை", "shoulder", "shoulder width"},
+    "height": {"உயரம்", "height"},
+    "chest": {"மார்பு சுற்றளவு", "மார்பு சுற்றளவு", "chest", "chest circumference"},
+    "sleeve": {"கை நீளம்", "கைநீளம்", "sleeve", "sleeve length"},
+    "arm": {"கை சுற்றளவு", "கைசுற்றளவு", "arm", "arm circumference"},
+    "waist": {"இடுப்பு சுற்றளவு", "இடுப்பு சுற்றளவு", "waist", "waist circumference"},
+    "leg_height": {"கால் உயரம்", "கால் உயரம்", "leg height", "bottom length"},
+    "thigh": {"தொடை சுற்றளவு", "தொடை சுற்றளவு", "thigh", "thigh circumference"},
+    "skirt_height": {"பாவாடை உயரம்", "பாவாடை உயரம்", "skirt height", "skirt length"},
+}
+BOYS_FIELDS = ["shoulder", "height", "chest", "sleeve", "arm", "waist", "leg_height", "thigh"]
+GIRLS_FIELDS = ["shoulder", "height", "chest", "sleeve", "arm", "skirt_height", "waist"]
+FIELD_DISPLAY = {
+    "shoulder": "தோள் பட்டை / Shoulder",
+    "height": "உயரம் / Height",
+    "chest": "மார்பு சுற்றளவு / Chest",
+    "sleeve": "கை நீளம் / Sleeve",
+    "arm": "கை சுற்றளவு / Arm",
+    "waist": "இடுப்பு சுற்றளவு / Waist",
+    "leg_height": "கால் உயரம் / Leg height",
+    "thigh": "தொடை சுற்றளவு / Thigh",
+    "skirt_height": "பாவாடை உயரம் / Skirt height",
+}
 
 
-def clean(s):
-    return re.sub(r"\s+", " ", str(s or "").strip().lower())
+def canonical_header(value):
+    s = clean(value).replace("_", " ")
+    for key, aliases in COMMON_HEADER_ALIASES.items():
+        if s in {clean(a) for a in aliases}:
+            return key
+    for key, aliases in MEASUREMENT_ALIASES.items():
+        if s in {clean(a) for a in aliases}:
+            return key
+    return s
 
 
 def job_dir():
@@ -93,7 +147,9 @@ def read_patterns(fileobj):
                     if v is not None:
                         vals.append(v)
             if vals:
-                patterns.append({"id": str(pid), "gender": gender, "classes": classes, "values": vals})
+                fields = BOYS_FIELDS if gender == "Boys" else GIRLS_FIELDS
+                value_map = {field: vals[i] for i, field in enumerate(fields) if i < len(vals)}
+                patterns.append({"id": str(pid), "gender": gender, "classes": classes, "values": vals, "value_map": value_map})
     return patterns
 
 
@@ -115,7 +171,7 @@ def generate_patterns(base_patterns, variants=3, seed=42):
     seen = set()
     for p in base_patterns:
         vals = [even_value(v) for v in p["values"]]
-        out.append(dict(p, values=vals))
+        out.append(dict(p, values=vals, value_map={field: vals[i] for i, field in enumerate(BOYS_FIELDS if p["gender"] == "Boys" else GIRLS_FIELDS) if i < len(vals)}))
         seen.add((p["gender"], tuple(p["classes"]), tuple(vals)))
     for p in base_patterns:
         for k in range(variants):
@@ -130,7 +186,7 @@ def generate_patterns(base_patterns, variants=3, seed=42):
             if key in seen:
                 continue
             seen.add(key)
-            out.append({"id": f'{p["id"]}-V{k + 1}', "gender": p["gender"], "classes": p["classes"], "values": vals})
+            out.append({"id": f'{p["id"]}-V{k + 1}', "gender": p["gender"], "classes": p["classes"], "values": vals, "value_map": {field: vals[i] for i, field in enumerate(BOYS_FIELDS if p["gender"] == "Boys" else GIRLS_FIELDS) if i < len(vals)}})
     return out
 
 
@@ -161,17 +217,15 @@ def normalize_header(v):
     return clean(v).replace("\n", " ")
 
 
-def detect_sheet_gender(ws, header_row):
-    """Infer gender from the student rows, falling back to the sheet title."""
-    gender_values = []
-    for r in range(header_row + 1, ws.max_row + 1):
-        v = clean(ws.cell(r, 3).value)
-        if v:
-            gender_values.append(v)
-    if any(v in ("female", "girl", "girls", "பெண்", "மாணவி", "மாணவிகள்") or "female" in v or "girl" in v for v in gender_values):
-        return "girls"
-    if any(v in ("male", "boy", "boys", "ஆண்", "மாணவன்", "மாணவர்கள்") or "male" in v or "boy" in v for v in gender_values):
-        return "boys"
+def detect_sheet_gender(ws, header_map):
+    """Infer gender from student rows using the actual Gender column, then sheet title."""
+    gcol = header_map.get("gender")
+    if gcol:
+        values = [clean(ws.cell(r, gcol).value) for r in range(header_map["header_row"] + 1, ws.max_row + 1)]
+        if any("female" in v or "girl" in v or v in {"பெண்", "மாணவி", "மாணவிகள்"} for v in values if v):
+            return "girls"
+        if any("male" in v or "boy" in v or v in {"ஆண்", "மாணவன்", "மாணவர்கள்"} for v in values if v):
+            return "boys"
     title = clean(ws.title)
     if "girl" in title or "female" in title or "பெண்" in title:
         return "girls"
@@ -180,69 +234,65 @@ def detect_sheet_gender(ws, header_row):
     return None
 
 
-def validate_template_workbook(wb):
-    """Validate the common student headers and infer boys/girls from the sheet data, not the sheet name."""
-    errors = []
-    valid_sheets = 0
-    for ws in wb.worksheets:
-        header_row = None
-        for r in range(1, min(ws.max_row, 20) + 1):
-            vals = [normalize_header(ws.cell(r, c).value) for c in range(1, ws.max_column + 1)]
-            if vals[:6] == COMMON_HEADERS:
-                header_row = r
-                break
-        if not header_row:
-            errors.append(f"Sheet '{ws.title}': required header row not found or does not match.")
-            continue
-
-        headers = [normalize_header(ws.cell(header_row, c).value) for c in range(1, ws.max_column + 1)]
-        gender_hint = detect_sheet_gender(ws, header_row)
-        if not gender_hint:
-            errors.append(f"Sheet '{ws.title}': could not determine whether this is a boys or girls template from the Gender column.")
-            continue
-
-        expected_measurements = GIRLS_MEASUREMENT_HEADERS if gender_hint == "girls" else BOYS_MEASUREMENT_HEADERS
-        actual_measurements = headers[6:6 + len(expected_measurements)]
-        if actual_measurements != expected_measurements:
-            errors.append(
-                f"Sheet '{ws.title}': measurement headers do not match the expected {gender_hint} template. "
-                f"Expected: {', '.join(expected_measurements)}"
-            )
-            continue
-        valid_sheets += 1
-
-    if not wb.worksheets:
-        errors.append("Workbook contains no worksheets.")
-    if errors:
-        return False, errors
-    if valid_sheets == 0:
-        return False, ["No valid student measurement sheet was found."]
-    return True, []
-
-def find_template_header(ws):
-    for r in range(1, min(ws.max_row, 15) + 1):
-        vals = [clean(ws.cell(r, c).value) for c in range(1, ws.max_column + 1)]
-        if vals[:6] == COMMON_HEADERS:
-            return r
+def find_header_map(ws):
+    for r in range(1, min(ws.max_row, 25) + 1):
+        mapping = {}
+        for c in range(1, ws.max_column + 1):
+            key = canonical_header(ws.cell(r, c).value)
+            if key in COMMON_HEADER_ALIASES:
+                mapping[key] = c
+        if all(k in mapping for k in COMMON_HEADER_ALIASES):
+            mapping["header_row"] = r
+            return mapping
     return None
 
 
+def validate_template_workbook(wb):
+    """Validate required headers by name, regardless of their column order."""
+    errors = []
+    valid_sheets = 0
+    for ws in wb.worksheets:
+        hmap = find_header_map(ws)
+        if not hmap:
+            errors.append(f"Sheet '{ws.title}': INVALID FILE. Required student headers were not found: S.No, Student's Name, Gender, EMIS Number, Class, Section.")
+            continue
+        gender_hint = detect_sheet_gender(ws, hmap)
+        if not gender_hint:
+            errors.append(f"Sheet '{ws.title}': INVALID FILE. Could not determine Boys/Girls from the Gender column or sheet name.")
+            continue
+        expected = BOYS_FIELDS if gender_hint == "boys" else GIRLS_FIELDS
+        missing = [f for f in expected if not any(canonical_header(ws.cell(hmap["header_row"], c).value) == f for c in range(1, ws.max_column + 1))]
+        if missing:
+            pretty = ", ".join(FIELD_DISPLAY[x] for x in missing)
+            errors.append(f"Sheet '{ws.title}': INVALID FILE. Missing measurement header(s): {pretty}.")
+            continue
+        valid_sheets += 1
+    if not wb.worksheets:
+        errors.append("INVALID FILE. Workbook contains no worksheets.")
+    if errors:
+        return False, errors
+    return valid_sheets > 0, ([] if valid_sheets else ["INVALID FILE. No valid student measurement sheet was found."])
+
+
 def template_info(ws):
-    hr = find_template_header(ws)
-    if not hr:
-        raise ValueError(f"Could not find the valid student table header in sheet '{ws.title}'.")
-    headers = [clean(ws.cell(hr, c).value) for c in range(1, ws.max_column + 1)]
-    gender_hint = detect_sheet_gender(ws, hr)
-    if gender_hint == "girls":
-        expected = GIRLS_MEASUREMENT_HEADERS
-    elif gender_hint == "boys":
-        expected = BOYS_MEASUREMENT_HEADERS
-    else:
-        raise ValueError(f"Could not determine gender/template type in sheet '{ws.title}'.")
-    if headers[6:6 + len(expected)] != expected:
-        raise ValueError(f"Invalid measurement headers in sheet '{ws.title}'.")
-    measurement_cols = list(range(7, 7 + len(expected)))
-    return hr, measurement_cols, 5, 3, 2, gender_hint
+    hmap = find_header_map(ws)
+    if not hmap:
+        raise ValueError(f"INVALID FILE: Sheet '{ws.title}' does not contain the required student headers.")
+    gender_hint = detect_sheet_gender(ws, hmap)
+    if not gender_hint:
+        raise ValueError(f"INVALID FILE: Sheet '{ws.title}' gender could not be determined.")
+    fields = BOYS_FIELDS if gender_hint == "boys" else GIRLS_FIELDS
+    field_cols = {}
+    header_row = hmap["header_row"]
+    for c in range(1, ws.max_column + 1):
+        key = canonical_header(ws.cell(header_row, c).value)
+        if key in fields:
+            field_cols[key] = c
+    missing = [f for f in fields if f not in field_cols]
+    if missing:
+        raise ValueError(f"INVALID FILE: Sheet '{ws.title}' missing measurement header(s): {', '.join(FIELD_DISPLAY[x] for x in missing)}")
+    return header_row, field_cols, hmap["class"], hmap["gender"], hmap["name"], gender_hint
+
 
 def choose_patterns(all_patterns, gender, cls, allow_fallback=True):
     exact = [p for p in all_patterns if p["gender"] == gender and cls in p["classes"]]
@@ -287,21 +337,23 @@ def fill_template(template_file, patterns, mode="round_robin", seed=42, allow_fa
             idx = counters.get(key, 0)
             p = rng.choice(plist) if mode == "random" else plist[idx % len(plist)]
             counters[key] = idx + 1
-            vals = p["values"]
-            if len(vals) < len(mcols):
-                report.append(("WARNING", ws.title, f"Row {r} ({name}): pattern {p['id']} has {len(vals)} values but template expects {len(mcols)}"))
-            for i, c in enumerate(mcols):
-                if i >= len(vals):
-                    break
+            value_map = p.get("value_map", {})
+            fields = BOYS_FIELDS if gender == "Boys" else GIRLS_FIELDS
+            missing_pattern = [f for f in fields if f not in value_map]
+            if missing_pattern:
+                report.append(("WARNING", ws.title, f"Row {r} ({name}): pattern {p['id']} missing {', '.join(FIELD_DISPLAY[x] for x in missing_pattern)}"))
+            for field, c in mcols.items():
+                if field not in value_map:
+                    continue
                 if overwrite or ws.cell(r, c).value in (None, ""):
-                    ws.cell(r, c).value = even_value(vals[i])
+                    ws.cell(r, c).value = even_value(value_map[field])
             report.append(("FILLED", ws.title, f"Row {r}: {name} <- {p['id']}" + (" (fallback)" if fallback else "")))
     return wb, report
 
 
-def save_pattern_to_job(pattern_file):
+def save_pattern_to_job(pattern_bytes):
     p = job_dir() / "patterns.xlsx"
-    pattern_file.save(p)
+    p.write_bytes(pattern_bytes)
     return p
 
 
@@ -331,10 +383,11 @@ def index():
         overwrite = request.form.get("overwrite") == "on"
         if pattern_file and pattern_file.filename:
             try:
-                patterns = read_patterns(pattern_file)
+                pattern_bytes = pattern_file.read()
+                patterns = read_patterns(BytesIO(pattern_bytes))
                 if not patterns:
                     raise ValueError("No pattern sheets were detected. A sheet must contain a 'Pattern' heading and numeric measurement columns.")
-                save_pattern_to_job(pattern_file)
+                save_pattern_to_job(pattern_bytes)
             except Exception as e:
                 flash(str(e))
                 return redirect(url_for("index"))
@@ -366,6 +419,13 @@ def index():
                 original_name = secure_filename(template_file.filename or "template.xlsx")
                 template_path = Path(original_name)
                 filled_name = f"{template_path.stem} FILLED{template_path.suffix or '.xlsx'}"
+                DONE_SCHOOLS_DIR.mkdir(parents=True, exist_ok=True)
+                done_path = DONE_SCHOOLS_DIR / filled_name
+                suffix = 1
+                while done_path.exists():
+                    done_path = DONE_SCHOOLS_DIR / f"{template_path.stem} FILLED ({suffix}){template_path.suffix or '.xlsx'}"
+                    suffix += 1
+                shutil.copy2(out_path, done_path)
                 results.append({
                     "name": filled_name,
                     "path": str(out_path),
