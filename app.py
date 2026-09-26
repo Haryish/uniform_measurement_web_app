@@ -350,9 +350,9 @@ def fill_template(template_file, patterns, mode="round_robin", seed=42, allow_fa
     return wb, report
 
 
-def save_pattern_to_job(pattern_file):
+def save_pattern_to_job(pattern_bytes):
     p = job_dir() / "patterns.xlsx"
-    pattern_file.save(p)
+    p.write_bytes(pattern_bytes)
     return p
 
 
@@ -382,10 +382,11 @@ def index():
         overwrite = request.form.get("overwrite") == "on"
         if pattern_file and pattern_file.filename:
             try:
-                patterns = read_patterns(pattern_file)
+                pattern_bytes = pattern_file.read()
+                patterns = read_patterns(BytesIO(pattern_bytes))
                 if not patterns:
                     raise ValueError("No pattern sheets were detected. A sheet must contain a 'Pattern' heading and numeric measurement columns.")
-                save_pattern_to_job(pattern_file)
+                save_pattern_to_job(pattern_bytes)
             except Exception as e:
                 flash(str(e))
                 return redirect(url_for("index"))
